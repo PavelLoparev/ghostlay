@@ -74,6 +74,29 @@ declare -gA LAYOUTS
 declare -gA BINDS
 declare -g DELAY=0.5
 
+generate_default_config() {
+    local dir
+    dir="$(dirname "$CONFIG_FILE")"
+    mkdir -p "$dir"
+    cat > "$CONFIG_FILE" <<'EOF'
+delay = 0.5
+
+bind = v:wtype -M ctrl -M shift -k o -m shift -m ctrl
+bind = h:wtype -M ctrl -M shift -k e -m shift -m ctrl
+bind = n:wtype -M logo -M ctrl -k bracketright -m ctrl -m logo
+bind = p:wtype -M logo -M ctrl -k bracketleft -m ctrl -m logo
+bind = rr:wtype -M logo -M ctrl -M alt -M shift -k Right -m shift -m alt -m ctrl -m logo
+bind = rl:wtype -M logo -M ctrl -M alt -M shift -k Left -m shift -m alt -m ctrl -m logo
+bind = ru:wtype -M logo -M ctrl -M alt -M shift -k Up -m shift -m alt -m ctrl -m logo
+bind = rd:wtype -M logo -M ctrl -M alt -M shift -k Down -m shift -m alt -m ctrl -m logo
+bind = cmd:wtype "$TOKEN" 2>/dev/null && wtype -k Return 2>/dev/null
+
+# Example layouts
+dev = "nvim ." v opencode rr rr p h rd rd p
+quad = v h p p h p
+EOF
+}
+
 read_config() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         line="${line#"${line%%[! ]*}"}"
@@ -95,47 +118,9 @@ read_config() {
     done < "$CONFIG_FILE"
 }
 
-wtype_cmd() {
-    wtype "$1" 2>/dev/null
-    wtype -k Return 2>/dev/null; sleep "$DELAY"
-}
-
-wtype_split() {
-    local dir="$1"
-    if [[ "$dir" == "v" ]]; then
-        wtype -M ctrl -M shift -k o -m shift -m ctrl
-    else
-        wtype -M ctrl -M shift -k e -m shift -m ctrl
-    fi
-    sleep "$DELAY"
-}
-
-goto_next() {
-    wtype -M logo -M ctrl -k bracketright -m ctrl -m logo; sleep "$DELAY"
-}
-
-goto_prev() {
-    wtype -M logo -M ctrl -k bracketleft -m ctrl -m logo; sleep "$DELAY"
-}
-
-resize_right() {
-    wtype -M logo -M ctrl -M alt -M shift -k Right -m shift -m alt -m ctrl -m logo; sleep "$DELAY"
-}
-
-resize_left() {
-    wtype -M logo -M ctrl -M alt -M shift -k Left -m shift -m alt -m ctrl -m logo; sleep "$DELAY"
-}
-
-resize_up() {
-    wtype -M logo -M ctrl -M alt -M shift -k Up -m shift -m alt -m ctrl -m logo; sleep "$DELAY"
-}
-
-resize_down() {
-    wtype -M logo -M ctrl -M alt -M shift -k Down -m shift -m alt -m ctrl -m logo; sleep "$DELAY"
-}
-
 main() {
     local DEBUG= LAYOUT_STR=
+    [[ ! -f "$CONFIG_FILE" ]] && generate_default_config
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --debug) DEBUG=1; shift ;;
@@ -148,7 +133,6 @@ main() {
 
     if [[ -z "$LAYOUT_STR" ]]; then
         [[ -z "$cmd" ]] && usage
-        [[ ! -f "$CONFIG_FILE" ]] && die "config file not found: $CONFIG_FILE"
         read_config
         if [[ "$cmd" == "ls" ]]; then
             echo "Available layouts:"; local name
@@ -157,7 +141,7 @@ main() {
         local layout="${LAYOUTS[$cmd]}"
         [[ -z "$layout" ]] && die "layout not found: $cmd (use 'ghostlay ls' to list)"
     else
-        [[ ! -f "$CONFIG_FILE" ]] || read_config
+        read_config
         local layout="$LAYOUT_STR"
         local cmd="(inline)"
     fi
@@ -169,35 +153,17 @@ main() {
     [[ -n "$DEBUG" ]] && echo "Tokens: ${tokens[*]}" >&2
     local token
     for token in "${tokens[@]}"; do
+        TOKEN="$token"
         if [[ -n "${BINDS[$token]:-}" ]]; then
             [[ -n "$DEBUG" ]] && echo "  bind $token: ${BINDS[$token]}" >&2
-            wtype ${BINDS[$token]}
-            sleep "$DELAY"
-        elif [[ "$token" == "v" || "$token" == "h" ]]; then
-            [[ -n "$DEBUG" ]] && echo "  split $token" >&2
-            wtype_split "$token"
-        elif [[ "$token" == "p" ]]; then
-            [[ -n "$DEBUG" ]] && echo "  prev" >&2
-            goto_prev
-        elif [[ "$token" == "n" ]]; then
-            [[ -n "$DEBUG" ]] && echo "  next" >&2
-            goto_next
-        elif [[ "$token" == "rr" ]]; then
-            [[ -n "$DEBUG" ]] && echo "  resize right" >&2
-            resize_right
-        elif [[ "$token" == "rl" ]]; then
-            [[ -n "$DEBUG" ]] && echo "  resize left" >&2
-            resize_left
-        elif [[ "$token" == "ru" ]]; then
-            [[ -n "$DEBUG" ]] && echo "  resize up" >&2
-            resize_up
-        elif [[ "$token" == "rd" ]]; then
-            [[ -n "$DEBUG" ]] && echo "  resize down" >&2
-            resize_down
+            eval "${BINDS[$token]}"
+        elif [[ -n "${BINDS[cmd]:-}" ]]; then
+            [[ -n "$DEBUG" ]] && echo "  cmd $token: ${BINDS[cmd]}" >&2
+            eval "${BINDS[cmd]}"
         else
-            [[ -n "$DEBUG" ]] && echo "  cmd: $token" >&2
-            wtype_cmd "$token"
+            die "no binding for token: $token"
         fi
+        sleep "$DELAY"
     done
 }
 

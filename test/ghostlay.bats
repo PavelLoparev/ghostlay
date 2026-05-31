@@ -3,7 +3,6 @@ setup() {
     export GHOSTLAY_CONFIG="$BATS_TEST_TMPDIR/config"
     export WTYPE_LOG="$BATS_TEST_TMPDIR/wtype.log"
     export PATH="$(dirname "$BATS_TEST_FILENAME")/bin:$PATH"
-    : > "$GHOSTLAY_CONFIG"
     : > "$WTYPE_LOG"
     source "$(dirname "$BATS_TEST_FILENAME")/../ghostlay"
 }
@@ -41,10 +40,10 @@ EOF
 
 @test "reads bind override from config" {
     write_config <<'EOF'
-bind = v:-M foo -k bar
+bind = v:wtype -M foo -k bar
 EOF
     read_config
-    [ "${BINDS[v]}" = "-M foo -k bar" ]
+    [ "${BINDS[v]}" = "wtype -M foo -k bar" ]
 }
 
 @test "parses a single layout from config" {
@@ -77,6 +76,7 @@ EOF
 }
 
 @test "empty config loads without error" {
+    : > "$GHOSTLAY_CONFIG"
     read_config
     [ "${#LAYOUTS[@]}" -eq 0 ]
 }
@@ -84,13 +84,13 @@ EOF
 @test "config with all features combined parses correctly" {
     write_config <<'EOF'
 delay = 1.5
-bind = n:-M foo -k bar
+bind = n:wtype -M foo -k bar
 dev = v "nvim"
 ops = h "htop"
 EOF
     read_config
     [ "$DELAY" = "1.5" ]
-    [ "${BINDS[n]}" = "-M foo -k bar" ]
+    [ "${BINDS[n]}" = "wtype -M foo -k bar" ]
     [ "${LAYOUTS[dev]}" = "v \"nvim\"" ]
     [ "${LAYOUTS[ops]}" = "h \"htop\"" ]
 }
@@ -138,7 +138,7 @@ EOF
     run main --debug --layout 'v'
     [ "$status" -eq 0 ]
     [ "$output" = "Tokens: v
-  split v" ]
+  bind v: wtype -M ctrl -M shift -k o -m shift -m ctrl" ]
 }
 
 @test "--layout runs inline tokens without config" {
@@ -204,7 +204,7 @@ EOF
 
 @test "bind override uses custom wtype args" {
     write_config <<'EOF'
-bind = v:-M foo -k bar
+bind = v:wtype -M foo -k bar
 EOF
     run main --layout 'v'
     [ "$status" -eq 0 ]
@@ -218,11 +218,12 @@ EOF
 -M logo -M ctrl -k bracketright -m ctrl -m logo" ]
 }
 
-@test "dies when config file not found (no --layout)" {
+@test "auto-generates default config when missing, runs --layout" {
     rm -f "$GHOSTLAY_CONFIG"
-    run main dev
-    [ "$status" -eq 1 ]
-    [ "$output" = "ghostlay: config file not found: $GHOSTLAY_CONFIG" ]
+    [[ ! -f "$GHOSTLAY_CONFIG" ]]
+    run main --layout 'v'
+    [ "$status" -eq 0 ]
+    [ "$(wtype_log)" = "-M ctrl -M shift -k o -m shift -m ctrl" ]
 }
 
 @test "dies when layout name not found in config" {
