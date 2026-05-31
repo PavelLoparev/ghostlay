@@ -2,6 +2,26 @@
 
 Automate Ghostty terminal pane splitting, navigation, resizing, and command execution. Sends keystrokes via `wtype` — nothing to install beyond the script itself.
 
+## Quick demo
+
+https://github.com/user-attachments/assets/bd9298f4-44c4-4f44-bd80-2ca8722978a2
+
+This inline layout:
+```
+ghostlay --layout 'v opencode p rr rr "fresh ." h rd rd p'
+```
+translates to:
+1. `v` - split vertically
+2. `opencode` - run comamnd
+3. `p` - go to previous pane
+4. `rr` - resize right 100px
+5. `rr` - resize right 100px
+6. `fresh .` - run comband
+7. `h` - split horizontally
+8. `rd` - resize down 100px
+9. `rd` - resize down 100px
+10. `p` - go to previous pane
+
 ## Dependencies
 
 - [wtype](https://github.com/atx/wtype) — Wayland keyboard input simulator
