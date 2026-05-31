@@ -1,0 +1,205 @@
+#!/bin/bash
+
+declare -g CONFIG_FILE="${GHOSTLAY_CONFIG:-$HOME/.config/ghostlay/config}"
+
+die() {
+    echo "ghostlay: $1" >&2
+    exit 1
+}
+
+usage() {
+    echo "Usage: ghostlay [--debug] [--layout <string>] <layout_name|ls>"
+    exit 1
+}
+
+help_text() {
+    cat <<'EOF'
+ghostlay — automated Ghostty terminal layout tool
+
+DESCRIPTION
+  ghostlay sends keystrokes via wtype to split panes, navigate between
+  them, resize, and run commands inside a Ghostty terminal. Layouts are
+  defined as a sequence of tokens and executed one-by-one.
+
+DEPENDENCY
+  wtype — Wayland keyboard input simulator (required)
+
+CONFIG
+  ~/.config/ghostlay/config
+
+  Format:
+    delay = 1       # seconds between keystrokes (optional)
+    bind = <t>:<p>  # override wtype params for token (optional)
+    name = token "command" token ...
+
+  Lines starting with '#' are ignored. Token order matters.
+
+  Bind overrides the wtype arguments for a token, e.g.:
+    bind = v:-M ctrl -M shift -k o -m shift -m ctrl
+    bind = n:-M logo -M ctrl -k bracketright -m ctrl -m logo
+
+  Example:
+    # Two-pane dev setup
+    dev = v p "nvim" n "cargo watch"
+
+TOKENS (keys / commands)
+  v    vertical split    (Ctrl+Shift+O)
+  h    horizontal split  (Ctrl+Shift+E)
+  n    next pane         (Super+Ctrl+])
+  p    previous pane     (Super+Ctrl+[)
+  rr   resize right      (Super+Ctrl+Alt+Shift+ArrowRight)
+  rl   resize left       (Super+Ctrl+Alt+Shift+ArrowLeft)
+  ru   resize up         (Super+Ctrl+Alt+Shift+ArrowUp)
+  rd   resize down       (Super+Ctrl+Alt+Shift+ArrowDown)
+  *    anything else is typed as a command followed by Enter; use quotes
+       for multi-word commands, e.g. "cargo watch"
+
+EXAMPLES
+  ghostlay ls                                        list saved layouts
+  ghostlay dev                                       run the "dev" layout
+  ghostlay --layout 'v n "htop"'                     run an inline layout (no config needed)
+  ghostlay --layout 'v n "nvim" n n "cargo watch"'   inline with multi-word cmd
+  ghostlay --debug dev                               show token trace while running
+
+NOTES
+  - Must be run inside a Ghostty terminal (checks $GHOSTTY_RESOURCES_DIR
+    or xterm-ghostty TERM value).
+  - All keystrokes target the currently focused window.
+  - Requires wtype tool.
+EOF
+    exit 0
+}
+
+declare -gA LAYOUTS
+declare -gA BINDS
+declare -g DELAY=0.5
+
+read_config() {
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line#"${line%%[! ]*}"}"
+        line="${line%"${line##*[! ]}"}"
+        [[ -z "$line" || "$line" == "#"* ]] && continue
+        if [[ "$line" =~ ^delay\ =\ ([0-9.]+)$ ]]; then
+            DELAY="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^bind\ =\ ([^:]+):(.*)$ ]]; then
+            local token="${BASH_REMATCH[1]}"
+            local params="${BASH_REMATCH[2]}"
+            params="${params#"${params%%[! ]*}"}"
+            params="${params%"${params##*[! ]}"}"
+            BINDS["$token"]="$params"
+        elif [[ "$line" == *" = "* ]]; then
+            local name="${line%% = *}"
+            local layout="${line#* = }"
+            LAYOUTS["$name"]="$layout"
+        fi
+    done < "$CONFIG_FILE"
+}
+
+wtype_cmd() {
+    wtype "$1" 2>/dev/null
+    wtype -k Return 2>/dev/null; sleep "$DELAY"
+}
+
+wtype_split() {
+    local dir="$1"
+    if [[ "$dir" == "v" ]]; then
+        wtype -M ctrl -M shift -k o -m shift -m ctrl
+    else
+        wtype -M ctrl -M shift -k e -m shift -m ctrl
+    fi
+    sleep "$DELAY"
+}
+
+goto_next() {
+    wtype -M logo -M ctrl -k bracketright -m ctrl -m logo; sleep "$DELAY"
+}
+
+goto_prev() {
+    wtype -M logo -M ctrl -k bracketleft -m ctrl -m logo; sleep "$DELAY"
+}
+
+resize_right() {
+    wtype -M logo -M ctrl -M alt -M shift -k Right -m shift -m alt -m ctrl -m logo; sleep "$DELAY"
+}
+
+resize_left() {
+    wtype -M logo -M ctrl -M alt -M shift -k Left -m shift -m alt -m ctrl -m logo; sleep "$DELAY"
+}
+
+resize_up() {
+    wtype -M logo -M ctrl -M alt -M shift -k Up -m shift -m alt -m ctrl -m logo; sleep "$DELAY"
+}
+
+resize_down() {
+    wtype -M logo -M ctrl -M alt -M shift -k Down -m shift -m alt -m ctrl -m logo; sleep "$DELAY"
+}
+
+main() {
+    local DEBUG= LAYOUT_STR=
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --debug) DEBUG=1; shift ;;
+            --layout) LAYOUT_STR="$2"; shift 2 ;;
+            -h|--help) help_text ;;
+            *) break ;;
+        esac
+    done
+    local cmd="$1"
+
+    if [[ -z "$LAYOUT_STR" ]]; then
+        [[ -z "$cmd" ]] && usage
+        [[ ! -f "$CONFIG_FILE" ]] && die "config file not found: $CONFIG_FILE"
+        read_config
+        if [[ "$cmd" == "ls" ]]; then
+            echo "Available layouts:"; local name
+            for name in "${!LAYOUTS[@]}"; do echo "  $name"; done; exit 0
+        fi
+        local layout="${LAYOUTS[$cmd]}"
+        [[ -z "$layout" ]] && die "layout not found: $cmd (use 'ghostlay ls' to list)"
+    else
+        [[ ! -f "$CONFIG_FILE" ]] || read_config
+        local layout="$LAYOUT_STR"
+        local cmd="(inline)"
+    fi
+
+    [[ -z "$GHOSTTY_RESOURCES_DIR" && "$TERM" != "xterm-ghostty" ]] && die "not running in a Ghostty terminal"
+    local tokens=()
+    eval "tokens=($layout)"
+    [[ ${#tokens[@]} -eq 0 ]] && die "no tokens in layout: $layout"
+    [[ -n "$DEBUG" ]] && echo "Tokens: ${tokens[*]}" >&2
+    local token
+    for token in "${tokens[@]}"; do
+        if [[ -n "${BINDS[$token]:-}" ]]; then
+            [[ -n "$DEBUG" ]] && echo "  bind $token: ${BINDS[$token]}" >&2
+            wtype ${BINDS[$token]}
+            sleep "$DELAY"
+        elif [[ "$token" == "v" || "$token" == "h" ]]; then
+            [[ -n "$DEBUG" ]] && echo "  split $token" >&2
+            wtype_split "$token"
+        elif [[ "$token" == "p" ]]; then
+            [[ -n "$DEBUG" ]] && echo "  prev" >&2
+            goto_prev
+        elif [[ "$token" == "n" ]]; then
+            [[ -n "$DEBUG" ]] && echo "  next" >&2
+            goto_next
+        elif [[ "$token" == "rr" ]]; then
+            [[ -n "$DEBUG" ]] && echo "  resize right" >&2
+            resize_right
+        elif [[ "$token" == "rl" ]]; then
+            [[ -n "$DEBUG" ]] && echo "  resize left" >&2
+            resize_left
+        elif [[ "$token" == "ru" ]]; then
+            [[ -n "$DEBUG" ]] && echo "  resize up" >&2
+            resize_up
+        elif [[ "$token" == "rd" ]]; then
+            [[ -n "$DEBUG" ]] && echo "  resize down" >&2
+            resize_down
+        else
+            [[ -n "$DEBUG" ]] && echo "  cmd: $token" >&2
+            wtype_cmd "$token"
+        fi
+    done
+}
+
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
+:
